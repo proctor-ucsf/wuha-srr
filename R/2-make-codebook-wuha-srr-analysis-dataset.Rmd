@@ -1,0 +1,95 @@
+---
+title: "wuha-srr-analysis-dataset.csv/.rds codebook"
+subtitle: "WUHA 0-36m seroreversion study longitudinal public dataset"
+date: "updated: `r Sys.time()`"
+authors: "Ben Arnold (ben.arnold@ucsf.edu)"
+output: 
+  html_document:
+    theme: default
+    highlight: pygments
+    code_folding: hide
+    toc: true
+    toc_depth: 3
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+---
+
+# Summary
+
+Here, you will find the codebook for the file `wuha-srr-analysis-dataset.csv/.rds`. This includes the longitudinal data for the WUHA trial during rounds 0-36. The dataset was created by `1-wuha-srr-data-processing.R`. There are two formats for the dataset, .csv and .rds butthe contents are the same. 
+
+The Rmd script that creates the codebook is `2-make-codebook-wuha-srr-analysis-dataset.Rmd` which is 
+called from the shell script `0-wuha-srr-RUNALL.sh`.
+
+The code below  based on Ruben Arslan's article on the "codebook" package: https://journals.sagepub.com/doi/full/10.1177/2515245919838783.
+
+```{r prepare_codebook, message = FALSE}
+library(here)
+source(here("R/0-wuha-srr-Config.R"))
+library(codebook)
+
+# WUHA SRR analysis dataset
+wuha_df <- read_rds(file = here("data/2-final","wuha-srr-analysis-dataset.rds"))
+
+```
+
+```{r prepare_dataset_indiv, message = FALSE}
+
+# "omit the following lines, if your missing values are already properly labelled" (R. Arslan)
+wuha_df <- detect_missing(wuha_df,
+    only_labelled = FALSE, # "only labelled values are autodetected as
+                                   # missing
+    negative_values_are_missing = FALSE, # negative values are missing values
+    ninety_nine_problems = TRUE,   # 99/999 are missing values, if they
+                                   # are more than 5 MAD from the median" (R. Arslan)
+    )
+
+# labelling variables
+var_label(wuha_df) <- list(
+                                       cluster_id_public = "Public cluster ID", 
+                                       household_id_public = "Public household ID", 
+                                       individual_id_public = "Public individual ID",
+                                       survey = "Month of follow-up",
+                                       arm = "Treatment group (randomized, cluster-level)",
+                                       age_months = "Age in months", 
+                                       age_years = "Age in years",
+                                       sex = "Child sex",
+                                       age_group = "Child age group in years (category)",
+                                       population = "WUHA sampling population",
+                                        pcr_individual = "Individual childPCR test result", 
+                                       tf = "Presence of TF", ti = "Presence of TI", 
+                                       pgp3_mfi = "Pgp3 Luminex median flourescence intensity minus background (MFI-bg)",
+                                       pgp3_pos = "Pgp3 seropositive",
+                                       pgp3_cutoff = "MFI value used to determine seropositivity"
+                                 )
+
+# labelling factor levels
+val_labels(wuha_df$tf) <- c("Present" = 1, "Absent" = 0)
+val_labels(wuha_df$ti) <- c("Present" = 1, "Absent" = 0)
+val_labels(wuha_df$pgp3_pos) <- c("Seropositive" = 1, "Seronegative" = 0)
+val_labels(wuha_df$population) <- c("Random sample 1-5y" = "A", 
+                                    "Random sample 6-9y" = "B", 
+                                    "Random sample 10+y" = "C", 
+                                    "Random sample 1-9y after baseline" = "DE", 
+                                    "Longitudinal cohort not selected as poart of random sample" = "F")
+
+# "If you are not using formr, the codebook package needs to guess which items
+# form a scale. The following line finds item aggregates with names like this:
+# scale = scale_1 + scale_2R + scale_3R
+# identifying these aggregates allows the codebook function to
+# automatically compute reliabilities.
+# However, it will not reverse items automatically." (R. Arslan)
+wuha_df <- detect_scales(wuha_df)
+
+```
+
+Create codebook
+
+```{r metadata and codebook indiv}
+
+metadata(wuha_df)$name <- "wuha-srr-analysis-dataset"
+metadata(wuha_df)$description <- "This is a codebook for the wuha-srr-analysis-dataset.csv/.rds files."
+codebook(wuha_df)
+```
+
