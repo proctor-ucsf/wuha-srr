@@ -1,0 +1,608 @@
+---
+title: "Seroconversion and seroreversion in the WUHA longitudinal cohort"
+author: "Christine Tedijanto christine.tedijanto@ucsf.edu and Ben Arnold ben.arnold@ucsf.edu"
+date: "Last updated: `r Sys.time()`"
+output:
+  html_document:
+    highlight: default
+    theme: default
+    code_folding: hide
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+---
+
+
+## Setup
+```{r setup}
+#----------------------------
+# source the project's
+# configuration file
+#----------------------------
+library(here)
+source(here("R/0-wuha-srr-Config.R"))
+```
+
+## Load dataset
+```{r load data}
+#----------------------------
+# read in the analysis dataset
+# this was created by
+# 1-wuha-srr-data-processing.R
+#----------------------------
+df <- read_rds(here("data/2-final/wuha-srr-analysis-dataset.rds"))
+
+#----------------------------
+# rename public ID vars to
+# usual names
+#----------------------------
+df <- df %>%
+  rename(cluster_id = cluster_id_public,
+         household_id = household_id_public,
+         individual_id = individual_id_public)
+
+#----------------------------
+# prepare data frame to 
+# look at changes over one year
+#----------------------------
+temp_curr_df <- df %>% mutate(next_survey = survey + 12)
+temp_next_df <- df %>%
+  dplyr::select(-c(arm)) %>% 
+  rename_at(vars(-c(cluster_id, household_id, individual_id)), ~paste0("next_", .))
+
+next_df <- temp_curr_df %>%
+  left_join(temp_next_df, by = c("cluster_id", "household_id", "individual_id", "next_survey")) %>% 
+  # add person-time
+  mutate(py_time = case_when(
+    is.na(pgp3_pos) | is.na(next_pgp3_pos) ~ 0,
+    # assume that seroreversion / seroconversion occur halfway through the year
+    (pgp3_pos == 0 & next_pgp3_pos == 1) ~ 0.5,
+    (pgp3_pos == 1 & next_pgp3_pos == 0) ~ 0.5,
+    TRUE ~ 1))
+
+```
+
+
+## Longitudinal cohort summary statistics
+
+```{r summary_stats}
+# number of serology measurements
+n_sero <- next_df %>% filter(!is.na(pgp3_pos)) %>% nrow()
+n_sero # 4327
+
+# number of children
+n_children <- next_df %>% filter(!is.na(pgp3_pos)) %>% pull(individual_id) %>% unique() %>% length() 
+n_children # 1511
+
+# number of one-year intervals
+n_oneyear <- next_df %>% 
+  filter(!is.na(pgp3_pos), !is.na(next_pgp3_pos)) 
+
+nrow(n_oneyear) # 2428
+n_oneyear$individual_id %>% unique() %>% length() # 1221
+(n_oneyear$individual_id %>% unique() %>% length())/n_children # 80.8%
+
+## prevalence stats
+get_overall_prev <- function(input_var, input_survey){
+  temp <- next_df %>% 
+    filter(survey == input_survey) %>% 
+    group_by(cluster_id) %>% 
+    summarise(n_pos = sum(get(input_var)==1, na.rm = TRUE),
+              n_total = sum(!is.na(get(input_var))),
+              .groups = "drop") %>% 
+    mutate(cluster_prev = n_pos / n_total)
+  
+  median(temp$cluster_prev)
+}
+
+# sero
+get_overall_prev(input_var = "pgp3_pos", input_survey = 0) # 0.322
+get_overall_prev(input_var = "pgp3_pos", input_survey = 12) # 0.372
+get_overall_prev(input_var = "pgp3_pos", input_survey = 24) # 0.417
+get_overall_prev(input_var = "pgp3_pos", input_survey = 36) # 0.559
+
+# pcr
+get_overall_prev(input_var = "pcr_individual", input_survey = 0) # 0.061
+get_overall_prev(input_var = "pcr_individual", input_survey = 12) # 0.207
+get_overall_prev(input_var = "pcr_individual", input_survey = 24) # 0.263
+get_overall_prev(input_var = "pcr_individual", input_survey = 36) # 0.302
+
+# tf
+get_overall_prev(input_var = "tf", input_survey = 0) # 0.650
+get_overall_prev(input_var = "tf", input_survey = 12) # 0.479
+get_overall_prev(input_var = "tf", input_survey = 24) # 0.569
+get_overall_prev(input_var = "tf", input_survey = 36) # 0.469
+```
+
+## Estimating seroconversion
+
+```{r scr_nonparam}
+scr_n <- next_df %>%
+  filter(!is.na(pgp3_pos), !is.na(next_pgp3_pos)) %>%
+  filter(pgp3_pos == 0, next_pgp3_pos == 1) %>%
+  nrow()
+
+scr_py <- next_df %>%
+  filter(!is.na(pgp3_pos), !is.na(next_pgp3_pos)) %>%
+  filter(pgp3_pos == 0) %>%
+  pull(py_time) %>%
+  sum()
+
+print(paste("seroconversions observed:", scr_n, "over", scr_py, "person-years"))
+
+scr_nonparam <- scr_n / scr_py
+
+print(paste0("nonparametric estimate: ", round(scr_nonparam*100, digits = 0), " per 100 person-years"))
+```
+
+```{r scr_reg}
+# seroconversion regression model
+scr_reg_fit <- glmer(next_pgp3_pos ~ 1 + (1|cluster_id),
+                     family = poisson(link = "log"),
+                     offset = log(py_time),
+                     data = next_df %>%
+                       filter(!is.na(pgp3_pos), !is.na(next_pgp3_pos)) %>% 
+                       filter(pgp3_pos == 0))
+
+scr_reg_df <- data.frame(
+  method = "regression",
+  scr = exp(summary(scr_reg_fit)$coefficients["(Intercept)", "Estimate"]),
+  scr_lb = exp(confint(scr_reg_fit, level = 0.95, method = "Wald")["(Intercept)", "2.5 %"]),
+  scr_ub = exp(confint(scr_reg_fit, level = 0.95, method = "Wald")["(Intercept)", "97.5 %"])
+  )
+
+print(paste0("Poisson regression estimate: ",
+             round(scr_reg_df$scr*100, digits = 1),
+             " (",
+             round(scr_reg_df$scr_lb*100, digits = 1),
+             ",",
+             round(scr_reg_df$scr_ub*100, digits = 1),
+             ") per 100 person-years"))
+```
+
+## Estimating seroreversion
+
+```{r srr_nonparam}
+next_df %>% filter(pgp3_pos == 1, !is.na(next_pgp3_pos)) %>% nrow()
+next_df %>% filter(pgp3_pos == 1, next_pgp3_pos == 1) %>% nrow()
+(next_df %>% filter(pgp3_pos == 1, next_pgp3_pos == 1) %>% nrow())/(next_df %>% filter(pgp3_pos == 1, !is.na(next_pgp3_pos)) %>% nrow())
+
+srr_n <- next_df %>%
+  filter(!is.na(pgp3_pos), !is.na(next_pgp3_pos)) %>%
+  filter(pgp3_pos == 1, next_pgp3_pos == 0) %>%
+  nrow()
+
+srr_py <- next_df %>%
+  filter(!is.na(pgp3_pos), !is.na(next_pgp3_pos)) %>%
+  filter(pgp3_pos == 1) %>%
+  pull(py_time) %>%
+  sum()
+
+print(paste("seroreversions observed:", srr_n, "over", srr_py, "person-years"))
+
+srr_nonparam <- srr_n / srr_py
+
+print(paste0("nonparametric estimate: ", round(srr_nonparam*100, digits = 0), " per 100 person-years"))
+```
+
+```{r srr_reg}
+# seroreversion regression model
+srr_reg_fit <- glmer(next_pgp3_neg ~ 1 + (1|cluster_id),
+                     family = poisson(link = "log"),
+                     offset = log(py_time),
+                     data = next_df %>%
+                       filter(!is.na(pgp3_pos), !is.na(next_pgp3_pos)) %>% 
+                       filter(pgp3_pos == 1) %>%
+                       # need to flip 1/0 so that seroreversions are the outcome of interest
+                       mutate(next_pgp3_neg = ifelse(next_pgp3_pos==1,0,1)))
+
+srr_reg_df <- data.frame(
+  method = "regression",
+  srr = exp(summary(srr_reg_fit)$coefficients["(Intercept)", "Estimate"]),
+  srr_lb = exp(confint(srr_reg_fit, level = 0.95, method = "Wald")["(Intercept)", "2.5 %"]),
+  srr_ub = exp(confint(srr_reg_fit, level = 0.95, method = "Wald")["(Intercept)", "97.5 %"])
+  )
+
+print(paste0("Poisson regression estimate: ",
+             round(srr_reg_df$srr*100, digits = 1),
+             " (",
+             round(srr_reg_df$srr_lb*100, digits = 1),
+             ",", 
+             round(srr_reg_df$srr_ub*100, digits = 1),
+             ") per 100 person-years"))
+```
+
+### Subgroup analyses
+
+### By survey
+
+```{r survey, fig.width = 8.5}
+srr_survey_reg_fit <- glmer(next_pgp3_neg ~ 1 + (1|cluster_id) + as.factor(survey),
+                            family = poisson(link = "log"),
+                            offset = log(py_time),
+                            data = next_df %>%
+                              filter(!is.na(pgp3_pos), !is.na(next_pgp3_pos)) %>% 
+                              filter(pgp3_pos == 1) %>% 
+                              mutate(next_pgp3_neg = ifelse(next_pgp3_pos==1,0,1)))
+
+srr_survey_df <- confint(srr_survey_reg_fit, level = 0.95, method = "Wald") %>% 
+  as.data.frame() %>%
+  rownames_to_column(var = "variable") %>% 
+  filter(variable != ".sig01") %>% 
+  # rename variables for figure
+  mutate(Month = case_when(
+    variable == "(Intercept)" ~ "0 to 12 (reference)",
+    variable == "as.factor(survey)12" ~ "12 to 24",
+    variable == "as.factor(survey)24" ~ "24 to 36")) %>%
+  # add exponentiated coefficients
+  left_join(summary(srr_survey_reg_fit)$coefficients %>% as.data.frame() %>% rownames_to_column(var = "variable"),
+            by = "variable") %>% 
+  mutate_at(vars("Estimate", "2.5 %", "97.5 %"), ~exp(.)) %>% 
+  # add reference group
+  add_row(Month = "0 to 12", "2.5 %" = 1, "97.5 %" = 1, "Estimate" = 1)
+
+srr_survey_df %>% filter(Month != "0 to 12") %>% dplyr::select(Month, Estimate, "2.5 %", "97.5 %")
+```
+
+### By age
+
+```{r age, fig.width = 8.5}
+next_df <- next_df %>% 
+  mutate(age_group_no0 = case_when(
+    #age_years %in% c(0) ~ "0y",
+    age_group == "0-5y" ~ "1-5y",
+    age_group == "6-9y" ~ "6-9y",
+    age_group == "10+y" ~ "10+y"))
+
+srr_age_reg_fit <- glmer(next_pgp3_neg ~ 1 + (1|cluster_id) + as.factor(age_group_no0),
+                         family = poisson(link = "log"),
+                         offset = log(py_time),
+                         data = next_df %>%
+                           filter(!is.na(pgp3_pos), !is.na(next_pgp3_pos),
+                                  age_group != "10+y") %>% 
+                           filter(pgp3_pos == 1) %>% 
+                           mutate(next_pgp3_neg = ifelse(next_pgp3_pos==1,0,1)))
+
+srr_age_df <- confint(srr_age_reg_fit, level = 0.95, method = "Wald") %>% 
+  as.data.frame() %>%
+  rownames_to_column(var = "variable") %>% 
+  filter(variable != ".sig01") %>% 
+  # rename variables for figure
+  mutate(age_group = case_when(
+    #variable == "(Intercept)" ~ "0y (reference)",
+    variable == "(Intercept)" ~ "1-5y (reference)",
+    variable == "as.factor(age_group_no0)6-9y" ~ "6-9y")) %>%
+  # add exponentiated coefficients
+  left_join(summary(srr_age_reg_fit)$coefficients %>% as.data.frame() %>% rownames_to_column(var = "variable"),
+            by = "variable") %>% 
+  mutate_at(vars("Estimate", "2.5 %", "97.5 %"), ~exp(.)) %>% 
+  # add reference group
+  add_row(age_group = "1-5y", "2.5 %" = 1, "97.5 %" = 1, "Estimate" = 1)
+
+srr_age_df %>% filter(age_group != "1-5y") %>% dplyr::select(age_group, Estimate, "2.5 %", "97.5 %")
+```
+
+### By starting MFI-bg
+
+```{r mfi, fig.width = 8.5}
+srr_quant_reg_fit <- glmer(next_pgp3_neg ~ 1 + (1|cluster_id) + mfi_log10,
+                           family = poisson(link = "log"),
+                           offset = log(py_time),
+                           data = next_df %>%
+                             filter(!is.na(pgp3_pos), !is.na(next_pgp3_pos)) %>% 
+                             filter(pgp3_pos == 1) %>% 
+                             mutate(mfi = ifelse(pgp3_mfi<=0, 1, pgp3_mfi),
+                                    mfi_log10 = log10(mfi),
+                                    mfi_log10_cat = cut(mfi_log10, breaks = 5)) %>% 
+                             mutate(next_pgp3_neg = ifelse(next_pgp3_pos==1,0,1)))
+
+srr_quant_df <- data.frame(method = "regression",
+                           srr = exp(summary(srr_quant_reg_fit)$coefficients["mfi_log10", "Estimate"]),
+                           srr_lb = exp(confint(srr_quant_reg_fit, level = 0.95, method = "Wald")["mfi_log10", "2.5 %"]),
+                           srr_ub = exp(confint(srr_quant_reg_fit, level = 0.95, method = "Wald")["mfi_log10", "97.5 %"]))
+
+print(paste0("Poisson regression estimate: ", round(srr_quant_df$srr, digits = 2),
+             " (", round(srr_quant_df$srr_lb, digits = 2), ",", round(srr_quant_df$srr_ub, digits = 2), ")"))
+```
+
+Re-estimate SRR, using categories of MFI on the log10 scale. Since the cutoff for seropositivity was 1113 in this study, use 4 categories of log10 3, 3.5, 4, >4
+```{r mfi category, fig.width = 8.5}
+#--------------------------
+# create a categorical var
+# for MFI levels
+# >1000, >10,000
+#--------------------------
+next_df2 <- next_df %>%
+  filter(!is.na(pgp3_pos), !is.na(next_pgp3_pos)) %>% 
+  filter(pgp3_pos == 1) %>% 
+  mutate(mfi = ifelse(pgp3_mfi<=0, 1, pgp3_mfi),
+         mfi_log10 = log10(mfi),
+         mfi_log10_cat = cut(mfi_log10, breaks = c(3,3.5,4,5)),
+         mfi_log10_cat = relevel(mfi_log10_cat, ref="(3,3.5]")) %>% 
+  mutate(next_pgp3_neg = ifelse(next_pgp3_pos==1,0,1))
+#--------------------------
+# cross tab of seroreversion
+# by starting MFI level
+#--------------------------
+table(next_df2$mfi_log10_cat, next_df2$next_pgp3_neg)
+
+#--------------------------
+# model-based SRR estimate
+#--------------------------
+srr_mficat_reg_fit <- glmer(next_pgp3_neg ~ 1 + (1|cluster_id) + mfi_log10_cat,
+                           family = poisson(link = "log"),
+                           offset = log(py_time),
+                           data = next_df2)
+
+srr_mficat_df <- confint(srr_mficat_reg_fit, level = 0.95, method = "Wald") %>% 
+  as.data.frame() %>%
+  rownames_to_column(var = "variable") %>% 
+  filter(variable != ".sig01") %>% 
+  # rename variables for figure
+  mutate(log10mficat = case_when(
+    variable == "(Intercept)" ~ "3 to 3.5 (reference)",
+    variable == "mfi_log10_cat(3.5,4]" ~ "3.5 to 4",
+    variable == "mfi_log10_cat(4,5]" ~ ">4")) %>%
+  # add exponentiated coefficients
+  left_join(summary(srr_mficat_reg_fit)$coefficients %>% as.data.frame() %>% rownames_to_column(var = "variable"),
+            by = "variable") %>% 
+  mutate_at(vars("Estimate", "2.5 %", "97.5 %"), ~exp(.)) %>% 
+  # add reference group
+  add_row(log10mficat = "3 to 3.5", "2.5 %" = 1, "97.5 %" = 1, "Estimate" = 1) %>%
+  mutate(log10mficat=factor(log10mficat,levels=c("3 to 3.5 (reference)","3 to 3.5","3.5 to 4",">4"))) %>%
+  arrange(log10mficat)
+
+srr_mficat_df %>% filter(log10mficat != "3 to 3.5 (reference)") %>% dplyr::select(log10mficat, Estimate, "2.5 %", "97.5 %")
+
+```
+
+## Estimating decay rate and half-life
+
+Code based on Arnold et al. in eLife Supplementary Information File 8. 
+
+Under an exponential decay model where IgG level at time $t$ is $N_t$ and the decay rate parameter is $\lambda$,  $N_t = N_0e^{(-\lambda t)}$, $\lambda = \frac{-\log(N_t/N_0)}{t}$, and the half life is $t_{1/2}=\log(2)/\lambda$.
+
+```{r estimate decay overall}
+# limit to children who are PCR negative
+# and who did not have increasing mfi-bg
+#
+# lambda = -log(N(t)/N(o))*(1/t); t1/2 = log2/lambda
+# or
+# t_1/2 = t / log_{1/2}(N(t)/N(o))
+decay_df <- next_df %>%
+  filter(next_pcr_individual %in% c(0, 0.5),
+         !is.na(pgp3_mfi), !is.na(next_pgp3_mfi),
+         pgp3_pos == 1,
+         next_pgp3_mfi<=pgp3_mfi) %>% 
+  mutate(lambda = -log(next_pgp3_mfi/pgp3_mfi)/1,
+         half_life = log(2)/lambda)
+
+summary(decay_df$lambda)
+summary(decay_df$half_life)
+
+# histogram of decay estimates for those that are <=20 years
+# this excludes 29 children for whom estimates >20
+length(decay_df$half_life[decay_df$half_life > 20])
+hist(decay_df$half_life[decay_df$half_life <= 20])
+```
+
+```{r estimate decay in groups}
+decay_df_2 <- decay_df %>%
+  mutate(fold_change = next_pgp3_mfi/pgp3_mfi) %>% 
+  mutate(fold_label = case_when(
+    fold_change < 0.25 ~ ">4 fold decrease",
+    fold_change < 0.5 ~ ">2 fold decrease",
+    TRUE ~ "<2 fold decrease"))
+
+decay_df_2 %>% count(fold_label)
+
+decay_df_2 %>% 
+  group_by(fold_label) %>% 
+  summarise(count = n(),
+            mean_lambda = mean(lambda),
+            sd_lambda = sd(lambda),
+            median_lambda = median(lambda),
+            mean_half_life = mean(half_life),
+            sd_half_life = sd(half_life),
+            median_half_life = median(half_life),
+            .groups = "drop")
+
+decay_df_2 %>% filter(fold_label == ">4 fold decrease") %>% pull(half_life) %>% summary()
+```
+
+```{r}
+# are more rapid drops associated with younger age groups?
+fold_age_model <- glm(fold_bin~age_years,
+    family = binomial("logit"),
+    data = decay_df_2 %>% 
+      mutate(fold_bin = ifelse(fold_label == ">4 fold decrease", 1, 0)))
+
+decay_df_2 %>% 
+  ggplot(aes(x = age_years, fill = fold_label)) +
+  geom_bar(stat = "count", position = "fill")
+```
+
+## Figures
+
+### A. Counts and seroprevalence by month
+
+```{r}
+fig_counts_df <- next_df %>%
+  count(survey, pgp3_pos) %>%
+  mutate(pgp3_pos_label = case_when(
+    pgp3_pos == 0 ~ "Negative",
+    pgp3_pos == 1 ~ "Positive",
+    TRUE ~ "Missing")) %>% 
+  mutate(pgp3_pos_label = factor(pgp3_pos_label, levels = c("Missing", "Positive", "Negative")),
+         survey = as.factor(survey))
+
+fig_counts <- fig_counts_df %>% 
+  ggplot(aes(x = survey, y = n, fill = pgp3_pos_label)) +
+  geom_bar(stat = "identity", position = "stack",
+           width = 0.6, color = NA) +
+  geom_text(data = fig_counts_df %>%
+              left_join(fig_counts_df %>%
+                          group_by(survey) %>%
+                          summarise(total = sum(n)),
+                        by = "survey") %>%
+              mutate(prop = n/total, prop_label = paste0(round(prop, digits=2)*100, "%")) %>%
+              group_by(survey) %>% 
+              # place text label in bar
+              mutate(loc_y = cumsum(n) - 0.5*n) %>% 
+              filter(pgp3_pos_label != "Missing"),
+            aes(x = survey, y = loc_y, label = prop_label),
+            color = "white", size = 2.5) +
+  # based on Paul Tol's high contrast
+  scale_fill_manual(values = c("Negative" = "#004488",
+                               "Positive" = "#BB5566",
+                               "Missing" = "#DDAA33")) +
+  labs(x = "Study month", y = "Number of children", fill = "Pgp3 serostatus") +
+  coord_cartesian(ylim = c(0,1500)) +
+  theme_bw() +
+  theme(legend.position = c(0.72, 0.86),
+        legend.title = element_text(size = 8),
+        legend.text = element_text(size = 8),
+        legend.key.height = unit(0.3, "cm"),
+        plot.margin = margin(0.6, 0.2, 0.4, 0.5, "cm"))
+```
+
+### B. MFI-bg by PCR status
+
+```{r mfi by pcr, warning = FALSE}
+fig_mfi <- next_df %>%
+  filter(pgp3_pos == 1, !is.na(next_pgp3_pos), !is.na(next_pcr_individual)) %>% # as of 10/08 update, remove missing PCR at x+12
+  dplyr::select(individual_id, age_years, survey, pgp3_pos, next_pgp3_pos, pgp3_mfi, next_pgp3_mfi) %>% 
+  # temp labels
+  mutate(fold_change = next_pgp3_mfi/pgp3_mfi) %>% 
+  mutate(fold_label = case_when(
+    fold_change < 0.25 ~ ">4 fold decrease",
+    fold_change < 0.5 ~ ">2 fold decrease",
+    TRUE ~ "<2 fold decrease")) %>% 
+  # end temp labels
+  mutate(row_n = row_number()) %>% 
+  pivot_longer(cols = c(pgp3_mfi, next_pgp3_mfi)) %>%
+  left_join(next_df %>% dplyr::select(individual_id, survey, next_pcr_individual),
+            by = c("individual_id", "survey")) %>%
+  mutate(next_pcr_label = case_when(
+    is.na(next_pcr_individual) ~ "PCR missing at x+12",
+    next_pcr_individual == 0 | next_pcr_individual == 0.5  ~ "PCR negative/equivocal at x+12",
+    next_pcr_individual == 1 ~ "PCR positive at x+12")) %>% 
+  mutate(next_pcr_label = factor(next_pcr_label, levels = c("PCR positive at x+12", "PCR negative/equivocal at x+12", "PCR missing at x+12"))) %>% 
+  mutate(x_val = ifelse(name == "pgp3_mfi", 0, 1)) %>% 
+  #filter(age_years>1) %>% 
+  #ggplot(aes(x = x_val, y = value, group = row_n, color = next_pcr_label, lty = fold_label)) +
+  ggplot(aes(x = x_val, y = value, group = row_n, color = next_pcr_label)) +
+  geom_line(data = . %>% filter(next_pgp3_pos==1), color = "darkgrey", lwd = 0.3, alpha = 0.3) +
+  geom_line(data = . %>% filter(next_pgp3_pos==0), alpha = 0.6, lwd = 0.5) +
+  geom_hline(yintercept = 1113, lty = "dashed") +
+  # keep as boxplot instead of violin bc several outliers cause violin to be elongated
+  geom_boxplot(aes(x = x_val+c(-0.07,0.07), y = value, group = x_val),
+               inherit.aes = FALSE,
+               fill = NA, width = 0.09, outlier.shape = NA,
+               lwd = 0.4) +
+  scale_x_continuous(breaks = c(0,1), labels = c("x", "x+12")) +
+  scale_y_log10(breaks = scales::trans_breaks("log10", function(x) 10^x)(c(1, 1e5)),
+                labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+  scale_color_manual(values = c("PCR negative/equivocal at x+12" = "#004488",
+                                "PCR positive at x+12" = "#BB5566",
+                                "PCR missing at x+12" = "#DDAA33")) +
+  #scale_linetype_manual(values = c(">4 fold decrease" = "solid", ">2 fold decrease" = "dashed", "<2 fold decrease" = "dotted")) +
+  coord_cartesian(xlim = c(-0.1,1.1)) +
+  facet_grid(cols = vars(next_pcr_label)) +
+  labs(y = "Pgp3 IgG level (MFI-bg)", x = "Study month") +
+  theme_bw() +
+  theme(#panel.grid = element_blank(),
+        #axis.text.x = element_text(face = "italic"),
+        legend.position = "none",
+        strip.background = element_rect(fill="white"),
+        strip.text = element_text(size = 10),
+        plot.margin = margin(0.6, 0.2, 0.4, 0.6, "cm"))
+```
+
+### C. Seroreversion by survey
+
+```{r}
+fig_surveys <- srr_survey_df %>% 
+  filter(Month != "0 to 12 (reference)") %>% 
+  ggplot() +
+  geom_hline(yintercept = 1, lty = "dashed") +
+  geom_errorbar(aes(x = Month, ymin = get("2.5 %"), ymax = get("97.5 %")), width = 0) +
+  geom_point(aes(x = Month, y = Estimate), pch = 21, size = 3, fill = "white") +
+  scale_y_continuous(trans = "log", breaks = c(0.01, 0.1, 0.5, 1, 2)) +
+  coord_cartesian(ylim = c(0.003, 2)) +
+  annotate("text",x=1,y=0.6,label="ref") +
+  labs(x = "Study month", y = "Seroreversion rate ratio") +
+  theme_bw() +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.margin = margin(0.6, 0.2, 0.2, 0.6, "cm"))
+```
+
+### D. Seroreversion by age group
+
+```{r}
+fig_ages <- srr_age_df %>% 
+  filter(age_group != "1-5y (reference)") %>% 
+  ggplot() +
+  geom_hline(yintercept = 1, lty = "dashed") +
+  geom_errorbar(aes(x = age_group, ymin = get("2.5 %"), ymax = get("97.5 %")), width = 0) +
+  geom_point(aes(x = age_group, y = Estimate), pch = 21, size = 3, fill = "white") +
+  scale_y_continuous(trans = "log", breaks = c(0.01, 0.1, 0.5, 1, 2)) +
+  coord_cartesian(ylim = c(0.003, 2)) +
+  annotate("text",x=1,y=0.6,label="ref") +
+  labs(x = "Age group", y = "Seroreversion rate ratio") +
+  theme_bw() +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.margin = margin(0.6, 0.2, 0.2, 0.6, "cm"))
+```
+
+### E. Seroreversion by starting MFI-bg
+```{r}
+fig_mficat <- srr_mficat_df %>% 
+  filter(log10mficat != "3 to 3.5 (reference)") %>% 
+  ggplot() +
+  geom_hline(yintercept = 1, lty = "dashed") +
+  geom_errorbar(aes(x = log10mficat, ymin = get("2.5 %"), ymax = get("97.5 %")), width = 0) +
+  geom_point(aes(x = log10mficat, y = Estimate), pch = 21, size = 3, fill = "white") +
+  scale_y_continuous(trans = "log", breaks = c(0.01, 0.1, 0.5, 1, 2)) +
+  coord_cartesian(ylim = c(0.003, 2)) +
+  annotate("text",x=1,y=0.6,label="ref") +
+  labs(x = "log10 IgG (MFI-bg)", y = "Seroreversion rate ratio") +
+  theme_bw() +
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        plot.margin = margin(0.6, 0.2, 0.2, 0.6, "cm"))
+```
+
+### Composite figure
+
+```{r, fig.width = 8.5, fig.height = 6}
+combined_top <- plot_grid(fig_counts, fig_mfi,
+                          labels = "AUTO",
+                          nrow = 1,
+                          rel_widths = c(0.33, 0.66))
+ 
+combined_bottom <- plot_grid(fig_surveys, fig_ages, fig_mficat,
+                             nrow = 1, labels = c("C", "D","E"),
+                             rel_widths = c(0.33,0.33,0.33))
+
+combined_fig <- plot_grid(combined_top, combined_bottom,
+                          ncol = 1, rel_heights = c(1, 0.8), labels = NULL)
+
+combined_fig
+
+ggsave(filename = here("output", "wuha_long_fig1.png"),
+       plot = combined_fig,
+       height = 6, width = 8)
+```
+
+
+## Session Info
+```{r session info}
+sessionInfo()
+
+```
+
