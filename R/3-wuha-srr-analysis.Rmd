@@ -577,7 +577,9 @@ fig_mficat <- srr_mficat_df %>%
         plot.margin = margin(0.6, 0.2, 0.2, 0.6, "cm"))
 ```
 
-### Composite figure
+### Composite figure 
+
+(original version not used)
 
 ```{r, fig.width = 8.5, fig.height = 6}
 combined_top <- plot_grid(fig_counts, fig_mfi,
@@ -594,15 +596,206 @@ combined_fig <- plot_grid(combined_top, combined_bottom,
 
 combined_fig
 
-ggsave(filename = here("output", "wuha_long_fig1.png"),
+ggsave(filename = here("output", "wuha_long_fig1_notused.png"),
        plot = combined_fig,
        height = 6, width = 8)
 ```
 
+### Figure 1
+
+```{r alt fig 1}
+mfi_df <- next_df %>%
+  filter(pgp3_pos == 1, !is.na(next_pgp3_pos), !is.na(next_pcr_individual)) %>% # as of 10/08 update, remove missing PCR at x+12
+  dplyr::select(individual_id, age_years, survey, pgp3_pos, next_pgp3_pos, pgp3_mfi, next_pgp3_mfi) %>% 
+  # temp labels
+  mutate(fold_change = next_pgp3_mfi/pgp3_mfi) %>% 
+  mutate(fold_label = case_when(
+    fold_change < 0.25 ~ ">4 fold decrease",
+    fold_change < 0.5 ~ ">2 fold decrease",
+    TRUE ~ "<2 fold decrease")) %>% 
+  pivot_longer(cols = c(pgp3_mfi, next_pgp3_mfi)) %>%
+  mutate(interval_time = ifelse(name == "pgp3_mfi", 0, ifelse(name == "next_pgp3_mfi", 1, NA_real_))) %>% 
+  left_join(next_df %>% dplyr::select(individual_id, survey, next_pcr_individual),
+            by = c("individual_id", "survey"))
+
+get_fig_mfi <- function(input_survey, input_pcr_pos){
+  
+  if(input_pcr_pos == TRUE){
+    pcr_list <- c(1) # positive
+  } else {
+    pcr_list <- c(0.5, 0) # negative or equivocal
+  }
+  
+  mfi_df %>% 
+    filter(survey == input_survey, next_pcr_individual %in% pcr_list) %>% 
+    ggplot(aes(x = interval_time, y = value, group = individual_id)) +
+    geom_line(data = . %>% filter(next_pgp3_pos==1), color = "darkgrey", lwd = 0.3, alpha = 0.3) +
+    geom_line(data = . %>% filter(next_pgp3_pos==0), alpha = 0.6, lwd = 0.5, color = "#BB5566") +
+    geom_hline(yintercept = 1113, lty = "dashed") +
+    # keep as boxplot instead of violin bc several outliers cause violin to be elongated
+    geom_boxplot(aes(x = interval_time+c(-0.07,0.07), y = value, group = interval_time),
+                 inherit.aes = FALSE,
+                 fill = NA, width = 0.09, outlier.shape = NA,
+                 lwd = 0.4) +
+    scale_x_continuous(breaks = c(0, 1), labels = c(input_survey, input_survey+12)) +
+    scale_y_log10(breaks = scales::trans_breaks("log10", function(x) 10^x)(c(1, 1e5)),
+                  labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+    coord_cartesian(xlim = c(0-0.1,1+0.1), ylim = c(1, 1e5)) +
+    labs(y = "Pgp3 IgG level (MFI-bg)", x = "Study month") +
+    theme_bw() +
+    theme(legend.position = "none",
+          strip.background = element_rect(fill="white"),
+          strip.text = element_text(size = 9))#,
+          #plot.margin = margin(0.6, 0.2, 0.4, 0.6, "cm"))
+}
+
+fig_mfi_pos <- plot_grid(get_fig_mfi(input_survey = 0, input_pcr_pos = TRUE),
+                         get_fig_mfi(input_survey = 12, input_pcr_pos = TRUE),
+                         get_fig_mfi(input_survey = 24, input_pcr_pos = TRUE),
+                         labels = NULL,
+                         nrow = 1,
+                         rel_widths = c(0.33, 0.33, 0.33))
+ 
+fig_mfi_neg_equi <- plot_grid(get_fig_mfi(input_survey = 0, input_pcr_pos = FALSE),
+                              get_fig_mfi(input_survey = 12, input_pcr_pos = FALSE),
+                              get_fig_mfi(input_survey = 24, input_pcr_pos = FALSE),
+                              labels = NULL,
+                              nrow = 1,
+                              rel_widths = c(0.33, 0.33, 0.33))
+
+alt_fig_1 <- plot_grid(fig_mfi_pos, fig_mfi_neg_equi,
+                       ncol = 1, rel_heights = c(1, 1), labels = c("A", "B"))
+
+alt_fig_1
+
+ggsave(filename = here("output", "wuha_long_fig_1.png"),
+       plot = alt_fig_1,
+       height = 5, width = 8)
+```
+
+```{r alt fig 1 v2}
+# try version of alt fig 1 that includes children missing PCR at x+12, and combines panels so that lines are colored by PCR status
+# resulting figures look a bit cluttered - could consider just coloring those who serorevert, and color by PCR status
+mfi_df <- next_df %>%
+  filter(pgp3_pos == 1, !is.na(next_pgp3_pos)) %>% # as of 10/08 update, remove missing PCR at x+12
+  dplyr::select(individual_id, age_years, survey, pgp3_pos, next_pgp3_pos, pgp3_mfi, next_pgp3_mfi) %>% 
+  # temp labels
+  mutate(fold_change = next_pgp3_mfi/pgp3_mfi) %>% 
+  mutate(fold_label = case_when(
+    fold_change < 0.25 ~ ">4 fold decrease",
+    fold_change < 0.5 ~ ">2 fold decrease",
+    TRUE ~ "<2 fold decrease")) %>% 
+  pivot_longer(cols = c(pgp3_mfi, next_pgp3_mfi)) %>%
+  mutate(interval_time = ifelse(name == "pgp3_mfi", 0, ifelse(name == "next_pgp3_mfi", 1, NA_real_))) %>% 
+  left_join(next_df %>% dplyr::select(individual_id, survey, next_pcr_individual),
+            by = c("individual_id", "survey"))
+
+get_fig_mfi <- function(input_survey){
+  
+  mfi_df %>% 
+    mutate(pcr_label = case_when(
+      is.na(next_pcr_individual) ~ "Missing",
+      next_pcr_individual == 1 ~ "Positive",
+      next_pcr_individual %in% c(0, 0.5) ~ "Negative/equivocal"
+    )) %>% 
+    filter(survey == input_survey) %>% 
+    ggplot(aes(x = interval_time, y = value, group = individual_id, color = pcr_label)) +
+    geom_line(lwd = 0.3, alpha = 0.3) +
+    geom_hline(yintercept = 1113, lty = "dashed") +
+    # keep as boxplot instead of violin bc several outliers cause violin to be elongated
+    geom_boxplot(aes(x = interval_time+c(-0.07,0.07), y = value, group = interval_time),
+                 inherit.aes = FALSE,
+                 fill = NA, width = 0.09, outlier.shape = NA,
+                 lwd = 0.4) +
+    scale_x_continuous(breaks = c(0, 1), labels = c(input_survey, input_survey+12)) +
+    scale_y_log10(breaks = scales::trans_breaks("log10", function(x) 10^x)(c(1, 1e5)),
+                  labels = scales::trans_format("log10", scales::math_format(10^.x))) +
+    scale_color_manual(values = c("Negative/equivocal" = "#004488",
+                                  "Positive" = "#BB5566",
+                                  "Missing" = "darkgrey")) + 
+    coord_cartesian(xlim = c(0-0.1,1+0.1), ylim = c(1, 1e5)) +
+    labs(y = "Pgp3 IgG level (MFI-bg)", x = "Study month") +
+    theme_bw() +
+    theme(legend.position = "none",
+          strip.background = element_rect(fill="white"),
+          strip.text = element_text(size = 9))#,
+          #plot.margin = margin(0.6, 0.2, 0.4, 0.6, "cm"))
+}
+
+alt_fig_1_v2 <- plot_grid(get_fig_mfi(input_survey = 0),
+                         get_fig_mfi(input_survey = 12),
+                         get_fig_mfi(input_survey = 24),
+                         labels = NULL,
+                         nrow = 1,
+                         rel_widths = c(0.33, 0.33, 0.33))
+
+alt_fig_1_v2
+```
+
+
+
+### Figure 2
+
+```{r alt fig 2}
+alt_fig_2 <- plot_grid(fig_surveys, fig_ages, fig_mficat,
+                       nrow = 1, labels = c("A", "B","C"),
+                       rel_widths = c(0.33,0.33,0.33))
+
+alt_fig_2
+
+ggsave(filename = here("output", "wuha_long_fig_2.png"),
+       plot = alt_fig_2,
+       height = 2.5, width = 8)
+```
+
+### Supplementary Table 1
+
+```{r table s1}
+# number of children sampled at each survey time point
+n_children_by_survey <- next_df %>% 
+  filter(!is.na(pgp3_mfi)) %>% 
+  group_by(survey) %>% 
+  count(name = "n_children")
+
+# age distribution by survey time point
+age_by_survey <- next_df %>% 
+  filter(!is.na(pgp3_mfi)) %>% 
+  group_by(survey) %>% 
+  summarise(
+    age_median = median(age_months),
+    age_q25 = quantile(age_months, p = 0.25),
+    age_q75 = quantile(age_months, p = 0.75)
+  )
+
+# seroprevalence by survey time point
+seroprev_by_survey <- next_df %>% 
+  filter(!is.na(pgp3_mfi)) %>% 
+  count(survey, pgp3_pos) %>%
+  group_by(survey) %>% 
+  mutate(total = sum(n)) %>% 
+  ungroup() %>% 
+  mutate(seroprev = n/total) %>% 
+  filter(pgp3_pos == 1) %>% 
+  dplyr::select(-c(n, total, pgp3_pos))
+
+# number of one-year intervals at each time point
+n_oneyear_by_survey <- next_df %>% 
+  filter(!is.na(pgp3_mfi), !is.na(next_pgp3_mfi)) %>% 
+  group_by(next_survey) %>% 
+  count() %>% 
+  rename(survey = next_survey,
+         n_oneyear = n)
+
+table_s1 <- plyr::join_all(
+  list(n_children_by_survey, age_by_survey, seroprev_by_survey, n_oneyear_by_survey),
+  by = "survey",
+  type = "left"
+)
+
+table_s1
+```
 
 ## Session Info
 ```{r session info}
 sessionInfo()
-
 ```
-
