@@ -56,8 +56,8 @@ long_df <- ind_all %>% filter(longitudinal_cohort == 1) %>% filter(age_years>0)
 # the overall dataset that was
 # read in above (ind_all)
 #----------------------------
-sero_drop_checks <- read_csv(here("data/0-untouched", "wuha_sero_drops.csv"))
-sero_drop_checks_2 <- read_csv(here("data/0-untouched", "wuha_large_drops_to_check.csv"))
+sero_drop_checks <- read_csv(here(box_data_path, "0-untouched/ethiopia-wuha-2016/wuha_sero_drops.csv"))
+sero_drop_checks_2 <- read_csv(here(box_data_path, "0-untouched/ethiopia-wuha-2016/wuha_large_drops_to_check.csv"))
 
 distinct_checks <- sero_drop_checks %>% dplyr::select(individual_id, verdict = `judgement call`) %>% 
   bind_rows(sero_drop_checks_2 %>% dplyr::select(individual_id, verdict) %>%
