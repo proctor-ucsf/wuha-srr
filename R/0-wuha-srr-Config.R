@@ -17,6 +17,7 @@ library(tidyverse)
 library(ggplot2)
 library(lme4)
 library(cowplot)
+library(renv)
 
 #-------------------------------
 # local file paths
