@@ -15,10 +15,16 @@
 library(here)
 library(tidyverse)
 library(ggplot2)
-library(lme4)
 library(cowplot)
 library(renv)
 library(kableExtra)
+
+# statistics packages
+library(lme4)
+library(foreach)
+library(doParallel)
+registerDoParallel(detectCores() - 1)
+
 
 #-------------------------------
 # local file paths
