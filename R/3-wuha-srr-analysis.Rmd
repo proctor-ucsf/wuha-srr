@@ -358,6 +358,105 @@ srr_mficat_df %>% filter(log10mficat != "3 to 3.5 (reference)") %>% dplyr::selec
 
 ```
 
+## Summary table of SCR and SRR
+
+Summarize the number of children at risk, person-years at risk, incident events, and rates for seroconversion and seroreversion. Children at risk of seroconversion were Pgp3 negative (-) at the beginning of a one-year interval, and children at risk of seroreversion were Pgp3 positive (+) at the beginning of a one-year interval.  Estimate rates overall and by subgroups. 
+
+```{r make a summary table of SCR and SRR}
+
+#----------------------------------
+# function to calculate chidren
+# at risk, person time at risk, and
+# incident events for seroconversion
+# and seroreversion for a data frame
+# with the specific vars defined below
+#----------------------------------
+
+calc_scr_srr <- function(x) {
+  xx <- x %>%
+    summarize(
+            tot_scr = sum(atrisk_scr, na.rm=TRUE),
+            pt_scr = sum(py_scr, na.rm=TRUE),
+            inc_scr = sum(new_scr, na.rm=TRUE),
+            
+            
+            tot_srr = sum(atrisk_srr, na.rm=TRUE),
+            pt_srr = sum(py_srr, na.rm=TRUE),
+            inc_srr = sum(new_srr, na.rm=TRUE)
+            ) %>%
+    mutate(scr = 100*inc_scr/pt_scr,
+           srr = 100*inc_srr/pt_srr
+           )
+  return(xx)
+}
+
+#----------------------------------
+# summarize the number of 
+# children at risk for each
+# incident outcome and the rate
+# overall, and by period, by age, by starting MFI-bg
+#----------------------------------
+
+# estimate number at risk and number sero-reverted
+d_inc <- next_df %>%
+  filter(!is.na(next_pgp3_pos)) %>%
+  # create MFI var, also used above in the figure
+  mutate(mfi = ifelse(pgp3_mfi<=0, 1, pgp3_mfi),
+         mfi_log10 = log10(mfi),
+         mfi_log10_cat = cut(mfi_log10, breaks = c(0,3,3.5,4,5), include.lowest = TRUE)
+         )  %>%
+  # mfi_log10_cat = relevel(mfi_log10_cat, ref="(3,3.5]")
+  mutate(atrisk_scr = ifelse(pgp3_pos ==0, 1, 0),
+         py_scr = ifelse(atrisk_scr==1, py_time,0),
+         new_scr = ifelse(atrisk_scr==1 & next_pgp3_pos == 1, 1, 0),
+         
+         atrisk_srr = ifelse(pgp3_pos ==1, 1, 0),
+         py_srr = ifelse(atrisk_srr==1, py_time,0),
+         new_srr = ifelse(atrisk_srr==1 & next_pgp3_pos == 0, 1, 0)
+  )
+
+# estimate overall
+inc_overall <- d_inc %>%
+  calc_scr_srr(.) %>%
+  mutate(subgroup = "Overall") %>%
+  mutate(stratum = "Overall")
+
+# estimate incidence rates by period
+inc_period <- d_inc %>%
+  group_by(survey) %>%
+  calc_scr_srr(.) %>%
+  mutate(subgroup = "Period") %>%
+  mutate(stratum = as.character(survey)) %>% select(-survey)
+  
+# estimate incidence rates by age group
+inc_age <- d_inc %>%
+  filter(age_group %in% c("0-5y","6-9y")) %>%
+  group_by(age_group) %>%
+  calc_scr_srr(.) %>%
+  mutate(subgroup = "Age group") %>%
+  rename(stratum = age_group)
+
+# estimate incidence rates by age group
+inc_mfi <- d_inc %>%
+  filter(!is.na(mfi_log10_cat)) %>%
+  group_by(mfi_log10_cat) %>%
+  calc_scr_srr(.) %>%
+  mutate(subgroup = "MFI") %>%
+  rename(stratum = mfi_log10_cat)
+
+# combine into a final table
+inc_tab <- bind_rows(inc_overall, inc_period, inc_age, inc_mfi) %>%
+  select(subgroup,stratum,tot_scr,pt_scr,inc_scr, scr, tot_srr, pt_srr, inc_srr, srr)
+
+kbl(inc_tab, digits = 1, col.names = c("Subgroup","Stratum",
+                                       "N child\nPgp3-", "Person-years\nat risk", "Incident\nseroconversion", "SCR*",
+                                       "N child\nPgp3+", "Person-years\nat risk", "Incident\nseroreversion", "SRR*")) %>%
+  kableExtra::kable_styling(bootstrap_options = "striped") %>%
+  kableExtra::add_header_above(header =c(" " = 2, "Seroconversion" = 4 , "Seroreversion" = 4)) %>%
+  footnote(symbol = c("SCR: seroconversion rate per 100 child-years; SRR: seroreversion rate per 100 child-years"))
+
+```
+
 ## Estimating decay rate and half-life
 
 Code based on Arnold et al. in eLife Supplementary Information File 8. 
