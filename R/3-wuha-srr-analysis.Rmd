@@ -116,6 +116,51 @@ get_overall_prev(input_var = "tf", input_survey = 24) # 0.569
 get_overall_prev(input_var = "tf", input_survey = 36) # 0.469
 ```
 
+## Summarize loss to follow-up
+
+Summarize the number of children lost in each period, and summarize the characteristics of children who were lost versus those who remained in the cohort to assess any potential sources of systematic bias.
+
+```{r loss to follow-up}
+#----------------------------------
+# track individual children by period
+# and over the three annual periods
+#----------------------------------
+dloss <- next_df %>%
+  filter(!is.na(pgp3_pos)) %>%
+  mutate(lost = ifelse(!is.na(pgp3_pos) & is.na(next_pgp3_pos),"lost","not lost")) %>%
+  group_by(individual_id) %>%
+  mutate(nmeas = n(),
+         nperiods = ifelse(lost=="not lost",1,0),
+         nperiods = sum(nperiods)
+         )
+
+#----------------------------------
+# at the individual child level
+# summarize the number of periods
+# to which they contributed and 
+# their follow-up status
+# (none, partial, complete)
+#----------------------------------
+dloss_indiv <- dloss %>%
+  group_by(individual_id) %>%
+  slice(1) %>%
+  rename(age_enroll = age_years) %>%
+  # set indeterminant pcr to unifected
+  mutate(pcr_individual = ifelse(pcr_individual==0.5,0,pcr_individual)) %>%
+  mutate(fup = case_when(
+    nperiods == 0 ~ "None",
+    nperiods >= 1 & nperiods <= 2 ~ "Partial",
+    nperiods == 3 ~ "Complete",
+    TRUE ~ as.character(NA)
+  ),
+  fup = factor(fup, levels = c("None", "Partial","Complete"))
+  )
+#----------------------------------
+# summary of child characteristics 
+# follow-up status
+#----------------------------------
+table1::table1(~ age_enroll + factor(pgp3_pos) + factor(tf) + factor(pcr_individual) + factor(nmeas) + factor(nperiods)  | fup, data = dloss_indiv %>% filter(survey<=36))
+```
 
 ## Estimate SCR and SRR
 
@@ -124,7 +169,7 @@ Summarize the number of children at risk, person-years at risk, incident events,
 ```{r make a summary table of SCR and SRR}
 
 #----------------------------------
-# function to calculate chidren
+# function to calculate children
 # at risk, person time at risk, and
 # incident events for seroconversion
 # and seroreversion for a data frame
@@ -137,8 +182,6 @@ calc_scr_srr <- function(x) {
             tot_scr = sum(atrisk_scr, na.rm=TRUE),
             pt_scr = sum(py_scr, na.rm=TRUE),
             inc_scr = sum(new_scr, na.rm=TRUE),
-            
-            
             tot_srr = sum(atrisk_srr, na.rm=TRUE),
             pt_srr = sum(py_srr, na.rm=TRUE),
             inc_srr = sum(new_srr, na.rm=TRUE)

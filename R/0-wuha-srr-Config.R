@@ -18,6 +18,7 @@ library(ggplot2)
 library(cowplot)
 library(renv)
 library(kableExtra)
+library(table1)
 
 # statistics packages
 library(lme4)
