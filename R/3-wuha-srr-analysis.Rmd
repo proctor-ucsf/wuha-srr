@@ -116,7 +116,7 @@ get_overall_prev(input_var = "tf", input_survey = 24) # 0.569
 get_overall_prev(input_var = "tf", input_survey = 36) # 0.469
 ```
 
-## Summarize loss to follow-up
+## Supplementary Table 1
 
 Summarize the number of children lost in each period, and summarize the characteristics of children who were lost versus those who remained in the cohort to assess any potential sources of systematic bias.
 
@@ -131,7 +131,8 @@ dloss <- next_df %>%
   group_by(individual_id) %>%
   mutate(nmeas = n(),
          nperiods = ifelse(lost=="not lost",1,0),
-         nperiods = sum(nperiods)
+         nperiods = sum(nperiods), 
+         firstsvy = min(survey)
          )
 
 #----------------------------------
@@ -159,10 +160,61 @@ dloss_indiv <- dloss %>%
 # summary of child characteristics 
 # follow-up status
 #----------------------------------
-table1::table1(~ age_enroll + factor(pgp3_pos) + factor(tf) + factor(pcr_individual) + factor(nmeas) + factor(nperiods)  | fup, data = dloss_indiv %>% filter(survey<=36))
+table1::table1(~ age_enroll + factor(pgp3_pos) + factor(tf) + factor(pcr_individual) + factor(firstsvy) + factor(nmeas) + factor(nperiods)  | fup, data = dloss_indiv %>% filter(survey<=36))
 ```
 
-## Estimate SCR and SRR
+
+## Supplementary Table 2
+
+Report the number of children measured for Pgp3 IgG in each survey, and summarize the age and seroprevalence.
+
+```{r table s2}
+# number of children sampled at each survey time point
+n_children_by_survey <- next_df %>% 
+  filter(!is.na(pgp3_mfi)) %>% 
+  group_by(survey) %>% 
+  count(name = "n_children")
+
+# age distribution by survey time point
+age_by_survey <- next_df %>% 
+  filter(!is.na(pgp3_mfi)) %>% 
+  group_by(survey) %>% 
+  summarise(
+    age_median = median(age_months),
+    age_q25 = quantile(age_months, p = 0.25),
+    age_q75 = quantile(age_months, p = 0.75)
+  )
+
+# seroprevalence by survey time point
+seroprev_by_survey <- next_df %>% 
+  filter(!is.na(pgp3_mfi)) %>% 
+  count(survey, pgp3_pos) %>%
+  group_by(survey) %>% 
+  mutate(total = sum(n)) %>% 
+  ungroup() %>% 
+  mutate(seroprev = n/total) %>% 
+  filter(pgp3_pos == 1) %>% 
+  dplyr::select(-c(n, total, pgp3_pos))
+
+# number of one-year intervals at each time point
+n_oneyear_by_survey <- next_df %>% 
+  filter(!is.na(pgp3_mfi), !is.na(next_pgp3_mfi)) %>% 
+  group_by(next_survey) %>% 
+  count() %>% 
+  rename(survey = next_survey,
+         n_oneyear = n)
+
+table_s2 <- plyr::join_all(
+  list(n_children_by_survey, age_by_survey, seroprev_by_survey, n_oneyear_by_survey),
+  by = "survey",
+  type = "left"
+)
+
+kbl(table_s2) %>%
+  kableExtra::kable_styling(bootstrap_options = "striped")
+```
+
+## Supplementary Table 3
 
 Summarize the number of children at risk, person-years at risk, incident events, and rates for seroconversion and seroreversion. Children at risk of seroconversion were Pgp3 negative (-) at the beginning of a one-year interval, and children at risk of seroreversion were Pgp3 positive (+) at the beginning of a one-year interval.  Estimate rates overall and by subgroups. 
 
@@ -304,7 +356,7 @@ print(paste("seroconversions observed:", scr_n, "over", scr_py, "person-years"))
 
 scr_nonparam <- scr_n / scr_py
 
-print(paste0("nonparametric estimate: ", round(scr_nonparam*100, digits = 0), " per 100 person-years"))
+print(paste0("nonparametric estimate: ", round(scr_nonparam*100, digits = 1), " per 100 person-years"))
 ```
 
 ```{r scr_reg}
@@ -354,7 +406,7 @@ print(paste("seroreversions observed:", srr_n, "over", srr_py, "person-years"))
 
 srr_nonparam <- srr_n / srr_py
 
-print(paste0("nonparametric estimate: ", round(srr_nonparam*100, digits = 0), " per 100 person-years"))
+print(paste0("nonparametric estimate: ", round(srr_nonparam*100, digits = 1), " per 100 person-years"))
 ```
 
 ```{r srr_reg}
@@ -919,52 +971,6 @@ ggsave(filename = here("output", "wuha_long_fig_2.png"),
        height = 2.5, width = 8)
 ```
 
-### Supplementary Table 1
-
-```{r table s1}
-# number of children sampled at each survey time point
-n_children_by_survey <- next_df %>% 
-  filter(!is.na(pgp3_mfi)) %>% 
-  group_by(survey) %>% 
-  count(name = "n_children")
-
-# age distribution by survey time point
-age_by_survey <- next_df %>% 
-  filter(!is.na(pgp3_mfi)) %>% 
-  group_by(survey) %>% 
-  summarise(
-    age_median = median(age_months),
-    age_q25 = quantile(age_months, p = 0.25),
-    age_q75 = quantile(age_months, p = 0.75)
-  )
-
-# seroprevalence by survey time point
-seroprev_by_survey <- next_df %>% 
-  filter(!is.na(pgp3_mfi)) %>% 
-  count(survey, pgp3_pos) %>%
-  group_by(survey) %>% 
-  mutate(total = sum(n)) %>% 
-  ungroup() %>% 
-  mutate(seroprev = n/total) %>% 
-  filter(pgp3_pos == 1) %>% 
-  dplyr::select(-c(n, total, pgp3_pos))
-
-# number of one-year intervals at each time point
-n_oneyear_by_survey <- next_df %>% 
-  filter(!is.na(pgp3_mfi), !is.na(next_pgp3_mfi)) %>% 
-  group_by(next_survey) %>% 
-  count() %>% 
-  rename(survey = next_survey,
-         n_oneyear = n)
-
-table_s1 <- plyr::join_all(
-  list(n_children_by_survey, age_by_survey, seroprev_by_survey, n_oneyear_by_survey),
-  by = "survey",
-  type = "left"
-)
-
-table_s1
-```
 
 ## Session Info
 ```{r session info}
