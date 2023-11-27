@@ -853,7 +853,9 @@ get_fig_mfi <- function(input_survey, input_pcr_pos){
     filter(survey == input_survey, next_pcr_individual %in% pcr_list) %>% 
     ggplot(aes(x = interval_time, y = value, group = individual_id)) +
     geom_line(data = . %>% filter(next_pgp3_pos==1), color = "darkgrey", lwd = 0.3, alpha = 0.3) +
-    geom_line(data = . %>% filter(next_pgp3_pos==0), alpha = 0.6, lwd = 0.5, color = "#BB5566") +
+    geom_line(data = . %>% filter(next_pgp3_pos==0), alpha = 0.8, lwd = 0.5, color = "#BB5566") +
+    # try black to avoid use of color?
+    # geom_line(data = . %>% filter(next_pgp3_pos==0), alpha = 0.8, lwd = 0.5, color = "black") +
     geom_hline(yintercept = 1113, lty = "dashed") +
     # keep as boxplot instead of violin bc several outliers cause violin to be elongated
     geom_boxplot(aes(x = interval_time+c(-0.07,0.07), y = value, group = interval_time),
@@ -864,11 +866,14 @@ get_fig_mfi <- function(input_survey, input_pcr_pos){
     scale_y_log10(breaks = scales::trans_breaks("log10", function(x) 10^x)(c(1, 1e5)),
                   labels = scales::trans_format("log10", scales::math_format(10^.x))) +
     coord_cartesian(xlim = c(0-0.1,1+0.1), ylim = c(1, 1e5)) +
-    labs(y = "Pgp3 IgG level (MFI-bg)", x = "Study month") +
-    theme_bw() +
+    labs(y = "Pgp3 IgG level (MFI-bg)", x = "Study month",title="") +
+    theme_classic() +
     theme(legend.position = "none",
           strip.background = element_rect(fill="white"),
-          strip.text = element_text(size = 9))#,
+          strip.text = element_text(size = 9),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()
+    )
           #plot.margin = margin(0.6, 0.2, 0.4, 0.6, "cm"))
 }
 
@@ -893,7 +898,7 @@ alt_fig_1
 
 ggsave(filename = here("output", "wuha_long_fig_1.png"),
        plot = alt_fig_1,
-       height = 5, width = 8)
+       height = 150, width = 180, units="mm")
 ```
 
 ```{r alt fig 1 v2}
