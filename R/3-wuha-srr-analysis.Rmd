@@ -317,7 +317,7 @@ kbl(inc_tab, digits = 1, col.names = c("Subgroup","Stratum",
 # the 95% CIs for the non-parametric
 # SCR and SRR to report in the text
 #----------------------------------
-nbootreps <- 1000
+nbootreps <- 10000
 dboot <- d_inc %>% filter(!is.na(next_pgp3_pos))
 clids <- unique(d_inc$cluster_id)
 bsamp <- matrix(sample(clids, size = nbootreps*length(clids), replace = TRUE),nrow=length(clids),ncol=nbootreps)
